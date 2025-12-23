@@ -1,16 +1,13 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
 name: Build
 
 on:
   release:
     types: [published]
-    workflow_dispatch:
+  workflow_dispatch: # Кнопка ручного запуска теперь будет видна
 
 jobs:
   deploy:
-    runs-on: ${{ matrix.cfg.os }}
+    runs-on: windows-latest # Собираем под Windows
     defaults:
       run:
         shell: bash
@@ -18,53 +15,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cfg:
-        - {os: windows-latest, python-version: '3.10', architecture: x64}
+        include:
+          - os: windows-latest
+            python-version: '3.10'
+            architecture: x64
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.cfg.python-version }} ${{ matrix.cfg.architecture }}
+
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.cfg.python-version }}
-        architecture: ${{ matrix.cfg.architecture }}
+        python-version: ${{ matrix.python-version }}
+        architecture: ${{ matrix.architecture }}
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install setuptools wheel twine pyinstaller~=5.6 build
+        pip install setuptools wheel pyinstaller~=5.6 build
 
-    - name: Setup
+    - name: Build Package
       run: |
         export BDISTWHEELFREEZELIBS=true
         python -m build
+        # Установка собранного wheel, чтобы PyInstaller видел все зависимости
         python -m pip install dist/amulet_map_editor-*.whl --upgrade
 
     - name: PyInstaller build
       run: |
-        built_path=Amulet-v${{ github.event.release.tag_name }}-$RUNNER_OS-${{ matrix.cfg.architecture }}.zip
-        echo "BUILT_PATH=$built_path" >> $GITHUB_ENV
+        # Задаем имя файла. Если это не релиз, используем имя 'manual'
+        TAG_NAME="${{ github.event.release.tag_name }}"
+        if [ -z "$TAG_NAME" ]; then TAG_NAME="manual"; fi
+        
+        BUILT_FILENAME="Amulet-v${TAG_NAME}-Windows-x64.zip"
+        echo "BUILT_PATH=$BUILT_FILENAME" >> $GITHUB_ENV
+        
+        # Запуск сборки через PyInstaller
         python -m PyInstaller -y Amulet.spec
+        
+        # Упаковка в ZIP (используем 7z, который есть в Windows-раннерах)
         cd dist
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          7z a $built_path Amulet
-        elif [ "$RUNNER_OS" == "macOS" ]; then
-          zip -r $built_path Amulet
-        else
-          echo "$RUNNER_OS not supported"
-          exit 1
-        fi
+        7z a "$BUILT_FILENAME" Amulet
         cd ..
 
-    - name: Publish to PyPi
-      env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.AMULET_MAP_EDITOR_PYPI_PASSWORD }}
-      run: |
-        twine upload dist/amulet[_-]map[_-]editor* --skip-existing
-
-    - name: Upload Release Asset
+    - name: Upload Release Asset (Artifact)
       uses: actions/upload-artifact@v4
       with:
-        name: ${{env.BUILT_PATH}}
+        name: Amulet-Build-Windows
         path: ./dist/${{env.BUILT_PATH}}
+        retention-days: 5
+
+    # Этот шаг закомментирован, так как он требует секретных ключей PyPi
+    # - name: Publish to PyPi
+    #   env:
+    #     TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+    #     TWINE_PASSWORD: ${{ secrets.AMULET_MAP_EDITOR_PYPI_PASSWORD }}
+    #   run: |
+    #     pip install twine
+    #     twine upload dist/amulet[_-]map[_-]editor* --skip-existing || echo "Skipping PyPi upload"
